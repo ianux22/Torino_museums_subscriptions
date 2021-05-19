@@ -1,0 +1,590 @@
+---
+title: "Predictive models for Torino's museums subscription churn rate"
+author: "Leonardo Patricelli"
+date: "21 giugno 2018"
+output:
+  word_document: default
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+
+library(WriteXLS)
+require(tidyverse)
+library(magrittr)
+library(RColorBrewer)
+library(lubridate)
+library(rgdal)
+library(plyr)
+library(sp)
+library(dplyr) # load dplyr
+library(tmap)
+library(ggplot2)   # for general plotting
+library(ggmap)    # for fortifying shapefileslibrary(maptools)
+library(raster)
+require(maptools)
+library(rgeos)
+library(tidyverse)
+library(lubridate)
+library(data.table)
+library(arules)
+library(arulesViz)
+
+library(caTools)
+library(data.table)
+library(psych)
+library(mvtnorm)
+library(caret)
+library(PRROC)
+library(ggplot2)
+library(caTools)
+library(pROC)
+library(readxl)
+library(MASS)
+library(e1071)
+library(utils)
+library(randomForest)
+require(caTools)
+library(e1071)
+
+
+```
+
+
+Introduction to the dataset
+
+In this paper I am going to show you some models in order to predict what kind of customers tend to renew the subscription of Piemonte's museums and who do not; To do this I used the dataset with the informations of 2014's customers. First of all let's have a look at the most interesting variables :
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+load("C:/Users/LEONARDO/Desktop/Relazione/Workspace Patricelli.RData")
+library(ggplot2)
+head(totale[,c(1,2,3,11, 13, 14, 16, 18)])
+```
+
+Now a quick introduction to the variables:
+.	codliente is the customer's ID
+.	spesa_tot is the total amount of money spent in museum tickets
+.	n_visite is the number of museums visited by the customer
+.	sesso is the gender of the customer
+.	comune is the city in which the customer lives
+.	cap is the zip code of the customer's city
+.	eta_abbonati is th ecustomer's age
+.	si2014 is a binary variable, 0 is for the customers who did not renew the card in 2014, 1 otherwise.
+
+Variable "Residenza" and "mesi_tot"
+
+In order to improve the dataset I created two more variables: Residenza and mesi_tot. Residenza is a factor variable with 4 levels that express the distance from Torino; in fact it was shown by following analysis that people who lives close to Torino renew more often the subscription rather than who lives further.
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+
+head(totale[,c(1, 13, 14, 23)])
+
+```
+
+The levels are assigned according to the distance from Torino ;
+- **3** if the customer lives in Torino
+- **2** if the customer lives in Torino's province
+- **1** if the customer lives outside Torino's province but in Piemonte
+- **0** if the customer lives outside Piemonte.
+
+**Mesi_tot** is another variable created by me, it includes values from 1 to 12, and shows in how many different months per year the customer went to visit any museum.
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+
+head(totale[,c(1,2,3,22)])
+
+```
+
+The logic behind the variable is that casual customers (and especially tourists) visit museum in less than a month, because usually their permanence last for less than a month. Secondly, in this way is possible to identify people who go in museums during the year, and not only in a period. Here we can see the frequency of each level of the variable.
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+library(plyr)
+count(totale,"mesi_tot")
+```
+
+
+
+Analyzing the dataset
+
+
+Customer's age
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+eta_sex <- ggplot(na.omit(totale), aes(x = eta_abbonati, fill=sesso)) + geom_density(alpha=0.4) + ggtitle("Customer's age") +
+  xlab("Age") 
+eta_sex + scale_fill_manual( values = c("black","white"), name="Gender",
+                             breaks=c("1", "0"),
+                             labels=c("Female", "Male")) 
+
+```
+
+From the graph it is easy to see that there is no difference in subscriber's age distribution; in fact female and male distribution curves are almost overlapping. So, we can assume that the gender is not important for subscribing.
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+eta <- ggplot(totale, aes(x = eta_abbonati, fill=si2014)) + geom_density(alpha=0.4) + ggtitle("Churn by age") + xlab("Age")
+eta + scale_fill_manual( values = c("red","blue"), name = "Renewal",
+                         breaks=c("1", "0"),
+                             labels=c("No", "Yes")) 
+
+
+```
+The graph shows the age of who Renew the subscription and who does not. As you can see the people tend to not renew the signature according to their age : higher the age, higher the chance to not renew. Instead, the age distribution between who renew is more or less constant until the sixties. So, we can conclude that the age can be an important variable to include in our prediction analysys.
+
+Churn by gender
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+plot_sex_churn <- totale[,c(11,18)]
+levels(plot_sex_churn$sesso)[2] <- "Female"
+levels(plot_sex_churn$sesso)[1] <- "Male"
+plot_sex_churn$Renewal <- totale$si2014
+plot_sex_churn$si2014 <- NULL
+levels(plot_sex_churn$Renewal)[1] <- "Churn"
+levels(plot_sex_churn$Renewal)[2] <- "Renewal"
+sesso_churn <- ggplot(data.frame(plot_sex_churn), aes(x=sesso, fill=Renewal)) +
+  geom_bar(position="dodge") + ggtitle("Gender and Churn") + xlab("Sex") 
+
+sesso_churn 
+```
+
+Total of Male and Female
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+summary(plot_sex_churn$sesso)
+```
+Total of Male and Female who churned
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+r.0 <- subset(plot_sex_churn, Renewal == "Churn")
+summary(r.0$sesso)
+```
+Total males and females who Renewed
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+r.1 <- subset(plot_sex_churn, Renewal== "Renewal" )
+summary(r.1$sesso)
+
+```
+
+Here we can see the gender of the people who renew the subscription and of who did not. In matter of churning, the proportions of female and male is the same: in fact the 72,78% of males renew the subscription and so do the 72,7% of Female. According to these results, it seems that the gender is not an important variable to predict renewals.
+
+Distance and churn
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+res_plot <- totale[,c(18,23)]
+
+levels(res_plot$Residenza)[4] <- "Torino"
+levels(res_plot$Residenza)[3] <- "Torino's province"
+levels(res_plot$Residenza)[2] <- "Piemonte"
+levels(res_plot$Residenza)[1] <- "Outside Piemonte"
+res_plot$Renewal <- totale$si2014
+res_plot$si2014 <- NULL
+levels(res_plot$Renewal)[1] <- "Churn"
+levels(res_plot$Renewal)[2] <- "Renewal"
+
+residenze.1 <- ggplot(data.frame(res_plot), aes(x=Residenza, fill=Renewal)) +  geom_bar() + xlab("Distance from Torino") + ggtitle("Distance and churn")
+
+residenze.1
+```
+This graph shows the number of Renewals per region. It is clear that most of Renewals come from people who lives in Torino and in its province. Infact there are few subscriptions from people who lives far away from Torino, and about half of them churn. This variable seems to be important for the prediction model.
+
+
+Spending and churn
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+spesa_churn <- ggplot(totale, aes(x = spesa_tot, fill=si2014)) + geom_density(alpha=0.25) + xlab("total spending")
+spesa_churn + scale_fill_manual( values = c("black","green"),name = "Renewal", breaks=c("1", "0"), labels=c("No", "Yes")) + xlim(c(0, 250))
+ 
+```
+
+Here we can have a look at the total spending for customers who renewed and who did not. The average Customer who renewed the subscription spend more compared to the other ones. We can conclude that this affect in a positive way the probability of renewal (more you spend higher the probability).
+
+
+Number of visits and churn
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+n_visite <- ggplot(totale, aes(x = n_visite, fill=si2014)) + geom_density(alpha=0.4)
+n_visite + scale_fill_manual( values = c("orange","white"),name = "Renewal", breaks=c("1", "0"), labels=c("No", "Yes")) + xlim(c(0,80))
+
+```
+
+Here we are analyzing the variable relative to the number of visits. This variable is related to the previous one : in fact higher the number of visits higher the total spending. Because of this we have results similar to the previous ones. In conclusion, higher the visits higher the renewal probability.
+
+"Mesi tot" and Renewal
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+mesi_plot <- totale[,c(18,22)]
+
+mesi_plot$Renewal <- totale$si2014
+mesi_plot$si2014 <- NULL
+levels(mesi_plot$Renewal)[1] <- "Churn"
+levels(mesi_plot$Renewal)[2] <- "Renewal"
+mesi_tot.1 <- ggplot(mesi_plot, aes(x = mesi_tot, fill=Renewal)) + geom_histogram(binwidth = 2) + ggtitle("Occurrency and Churn") + xlab("Occurrency")
+mesi_tot.1
+```
+
+Here is visualized the "mesi_tot" variable among the subscribers. It is clear that people who use the subsciption only in a short time (one or two month) tend to churn; this could be possible because most of people are turists, and will go away from Torino after a while.
+
+
+Subscriptions distribution in Nord-Italy
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+mappa_tessere
+
+```
+
+The map show what is the distributon of the subscriptions in north-Italy. The borders in the shapefile define the italian cities (in fact each region defined by the borders has an own zipcode) At first glance we can see that we have colours close to yellow in proximity of Torino, because in all the other cities outside Piemonte the color is red. Gray color is for cities which have no subscriptions at all (missing values). So it is better to do a focus to Piemonte status.
+
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+mappa_tessere_piemonte
+
+```
+
+Zooming on Piemonte it is clear that in Torino's Province there is the highest number of subscriptions. This fact support our decision to build a variable that takes into account the distance from Torino. Also, Analizing the number of visits per city it is clear that people who lives in cities close to torino tend to do more visits.
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+mappa_visite
+```
+
+
+
+Renewal Distribution in North Italy
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+mappa_cap_churn
+```
+
+The picture shows subscription's renewal distribution in North Italy. It was to be expected by previous analysis that most of the renewals are in Piemonte's region, so we should focus on this area. As we can see here, the Torino's province is the area with the highest number of renewals; this result supports the decision to include a variable to consider Torino's distance.
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+mappa_cap_churn_piemonte
+
+```
+As we can see here, the Torino's province is the area with the highest number of renewals; this result supports the decision to include a variable to take into account Torino's distance.
+
+Market Basket Analysis
+
+Now we are going to proceed with Market Basket Analysis in order to identify what are the most visited museums and to understand if there are any association rules between museums.
+The graph below shows the most visited places in the dataset.
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+
+library(arules)
+library(arulesViz)
+library(datasets)
+library(arulesViz)
+
+itemFrequencyPlot(txn,
+                  type="relative",
+                  topN=10, # can be changed to the number of interest
+                  horiz=TRUE,
+                  col='steelblue3',
+                  xlab='',
+                  main='Item frequency, relative')
+
+```
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+barplot(sort(table(unlist(LIST(txn))))[1:10],
+        horiz=TRUE,
+        las=1,
+        col='steelblue3',
+        xlab='',
+        main='Frequency, relative')
+```
+
+Now let's proceed analyzig the items.
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+inspect(sort(itemsets, by='support', decreasing = T)[1:10])
+
+```
+Here we have ordered our transactions by support, so we have the items with the highest frequency of occurrence. 
+Especially {MOSTRA BORN SOMEWHERE,MUSEO REGIONALE DI SCIENZE NATURALI} and {MUSEO ANTROP. CRIMINALE CESARE LOMBROSO, MUSEO DELLA FRUTTA} have a very high lift.
+
+What patterns lead customers to visit a specific museum?
+
+Now let's proceed to search rules for the most visited museums. Our aim is to find out what customers have purchased before visiting the museum under the column "rhs". This will help us to understand the patterns that led to the visit of the museum under the colum "rhs". I added the criterium "confidence > 0.7". Confidence is probability of purchase B, given purchase A happened (basically the conditional probability P(B|A)). For recommending a good rule we prefer higher confidence. Here I propose you only the best "10 rules" per museum that I found out.
+
+Palazzo Reale
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+inspect(sort(subset(rules,
+                    subset=rhs %in% 'PALAZZO REALE' & confidence > .7),
+             by = 'confidence',
+             decreasing = T)[1:10])
+```
+
+Here the visualization of the 6 rules with the highest confidence.
+
+
+Museo Egizio
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+inspect(sort(subset(rules,
+                    subset=rhs %in% 'MUSEO EGIZIO' & confidence > .7),
+             by = 'confidence',
+             decreasing = T)[1:10])
+```
+
+Here the visualization of the 4 rules with the highest confidence.
+
+Now let's see another type of association rules; this time I will find out what products were purchased after/along with product X, so we will have our "given item" under the "lhs" column. The criterium "confidence > 0.7" is still valid. I will add the visualization of the rules with confidence = 1 under the output. 
+I will not show the plot of the rules because they will result too much chaotic.
+
+
+Mostra Elliot Erwitt
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+inspect(sort(subset(rules,
+                    subset=lhs %in% 'MOSTRA ELLIOTT ERWITT' & confidence > .7),
+             by = 'confidence',
+             decreasing = T)[1:10])
+
+```
+
+Mostra Robert Capa - Retrospettiva
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+inspect(sort(subset(rules,
+                    subset=lhs %in% 'MOSTRA ROBERT CAPA - RETROSPETTIVA' & confidence > .7),
+             by = 'confidence',
+             decreasing = T)[1:10])
+```
+
+Palazzo Reale
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+inspect(sort(subset(rules,
+                    subset=lhs %in% 'PALAZZO REALE' & confidence > .7),
+             by = 'confidence',
+             decreasing = T)[1:10])
+
+```
+
+Museo Egizio
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+inspect(sort(subset(rules,
+                    subset=lhs %in% 'MUSEO EGIZIO' & confidence > .7),
+             by = 'confidence',
+             decreasing = T)[1:10])
+```
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+inspect(sort(subset(rules,
+                    subset=lhs %in% 'MUSEO NAZIONALE DEL CINEMA' & confidence > .7),
+             by = 'confidence',
+             decreasing = T)[1:10])
+```
+
+Analyzing the rules and the position of each museum most of the times we can see that all the museums in the itemset are pretty close to each others, especially the ones in the city centre such as "museo egizio", "palazzo madama", "palazzo reale" and "museo nazionale del risorgimento italiano". This can explain most of the rules analyzed.
+
+
+Customers Segmentation via SOM
+
+Self-Organising Maps (SOMs) are an unsupervised data visualisation technique that can be used to visualise high-dimensional data sets in lower (typically 2) dimensional representations and to create clusters among the observations. In this chapter we will create clusters with SOM.
+I must premise that I used the "Tanimoto Distance" to create the categories.
+
+Phase 1: Training Progress
+
+First of all we must train our SOM model: As the SOM training iterations progress, the distance from each node's weights to the samples represented by that node is reduced. Ideally, this distance should reach a minimum plateau. This plot option shows the progress over time. If the curve is continually decreasing, more iterations are required.
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+plot(m, type="changes")
+
+```
+Phase 2: Counts plot
+
+The Kohonen packages in R allows us to visualize the count of how many samples are mapped to each node on the map. This metric can be used as a measure of map quality - ideally the sample distribution is relatively uniform. Our distribution seems quite good.
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+plot(m, type="counts")
+
+```
+
+Phase 3: Neighbour distance plot
+Often referred to as the "U-Matrix", this visualization is of the distance between each node and its neighbours. Areas of low neighbour distance indicate groups of nodes that are similar. Areas with large distances indicate the nodes are much more dissimilar - and indicate natural boundaries between node clusters. 
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+plot(m, type="dist.neighbours")
+
+```
+Phase 4: Codes / Weight vectors
+
+The node weight vectors, or "codes", are made up of normalised values of the original variables used to generate the SOM. Each node's weight vector is representative / similar of the samples mapped to that node. By visualising the weight vectors across the map, we can see patterns in the distribution of samples and variables. The default visualization of the weight vectors is a "fan diagram", where individual fan representations of the magnitude of each variable in the weight vector is shown for each node.
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+plot(m, type="codes")
+
+```
+
+Thanks to the codes plot it is possible to find areas with similar conjunct distribution of variables across the nodes.  At the top-left of the map it is possible to see customers with high values in the variables, who are the ones with the lowest probability to churn. Also going from the right toward the center of the SOM map are listed groups with an increasing value of "importo".
+The people with the lowest values in the variables, who are the ones with higher probability to churn, are situated at the bottom right of the map.
+With SOM is also possible to see how each node vary with each single variable, so undirectly this let us know which variable is the most efficient to create clusters.
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+plot(m, type="codes")
+
+```
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+plot(m, type="codes")
+
+```
+Once built the SOM model we must find out what is the optimal number of cluster; to do this I used two methods: the Ward's method (figure 1) and the Silhouette method (figure 2).
+
+Figure 1
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+factoextra::fviz_nbclust(dist_adj
+                         , factoextra::hcut
+                         , method = "wss"
+                         , hc_method = 'ward.D2'
+                         , k.max = 15)
+
+```
+
+Figure 2
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+factoextra::fviz_nbclust(dist_adj
+                         , factoextra::hcut
+                         , method = "wss"
+                         , hc_method = 'ward.D2'
+                         , k.max = 15)
+
+
+```
+Both methods agree with creating 3 clusters.
+
+Once created these clusters I will use them as a categorical variable for the classification.
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+plot(m, type="codes", main = "Clusters", bgcol = col_vector[som_cluster_adj], pchs = NA)
+
+
+
+```
+
+Econometricel approach: The Logit Model
+
+Here I will Provide evidence on which variables have the highest impact on the probability to churn, and in order to do this I will use a logit model using as dependent variable "si2014", that is the variable for the Renewal. Let's have a look to the variables used to build the model and to their coefficients. Below there are the coefficients and the variables used: 
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+
+summary(mylogit)
+```
+
+All the coefficients are significative except the clusters created with the SOM; according to the logit model, these variables are not really useful to explain the churn.
+"Gender" also is not much significative, but we could imagine it since descriptive statistics.
+Here Below instead the exponentials of the coefficients.
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+exp(coef(mylogit))
+
+```
+
+The coefficients it selves have no much sense; they became useful when insert in an exponential function, because we can interpret them as an odds-ratio.
+It is clear that the most important variable seems being "Residenza", the variable that represent the area in which the customers lives: In fact, who lives in Torino has and Odd to renew 53% higher than who lives outside Piemonte. 
+In fact as we get closer and closer to Torino we notice that the odds-ratio increases, this influence the probability of renewing. 
+Also "mesi_tot" seems a good variable to explain the churn: in fact, increasing by one variable the odd of renewal increase by 29,84%. Same for the age of the customers: increasing by one the age the odd of renewal increase by 3 %.
+
+
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+ggplot(plot.data, aes(x=X1, y=prob, color=group)) + # asking it to set the color by the variable "group" is what makes it draw three different lines
+  geom_line(lwd=2) + 
+  labs(x="Age", y="P(Renewal)", title="Renewal Probability")
+
+```
+
+Renewal Predictions
+
+Right now I will show you some models to predict churning; it is a different matter from finding causal relations, as it has been done in the previous chapter. 
+I used three different methods to do this: Support vector machine (SVM), Random Forest and logit model (that I used before). I used the same variables for all the three models. 
+Firstly, all the methods were trained on part of the dataset (train dataset) and then tested on the rest of data not used for training (test dataset). In particular I used the cross-validation method for Rainbow Forest and SVM in order to choose the best parameters for the algorithms; before continuing with the analysis I must premise that due to the processor of my PC (an intel i5) I have trained the models on 10'000 obserations. It was not possible for me using more observations.
+Let's start comparing the confusion matrix (of the test dataset) for each model and their ROC curves. I used a threshold of 0.5 to do the classification.
+The confusion matrix (or error matrix) is one way to summarize the performance of a classifier for binary classification tasks. This square matrix consists of columns and rows that list the number of instances as absolute or relative "actual class" vs. "predicted class" ratios.
+Let P be the label of class 1 and N be the label of a second class or the label of all classes that are not class 1 in a multi-class setting.
+
+Logit model:
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+table(test.4$si2014, prediction.logit.test > 0.5)
+```
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+plot(ROCRperf.1, colorize = TRUE, text.adj = c(test.4-0.2,1.7))
+
+```
+
+SVM model : 
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+table(pred_test, test.4$si2014)
+
+```
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+plot(svm_ROC,col='blue',lwd=1)
+
+
+```
+
+Random Forest Model : 
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+table(pred_RF_test, test.4$si2014)  
+ 
+
+```
+
+
+
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+plot(rf_ROC,col='black',main='ROC curves',lwd=1,xlab='False Positive', ylab='True Positive')
+plot(svm_ROC,col='blue',lwd=1,add=T)
+plot(ROCRperf.1,col='orange',lwd=1,add=T)
+legend('right',legend=c('RandomForest','SVM','logit'),col=c('black','blue','orange'),lty=1,lwd=2,cex=0.6)
+
+
+```
+
+It seems that Random forest and logit models work better than SVM, but it is quite difficult to choose between these two the best one.
+In order to do this, we must control our constraints.
+We should contact customers with higher probability to renew and ask them if they want to renew their subscription.
+Our budget is 5000 euro, and Each phone call has a variable cost of 1 euro (line and operator). 
+In this context we should choose the model that maximize our profits.
+To calculate the expected profit by each person I decided to use the expected value of a binomial distribution with "p" as probability to renew.
+
+In order to calculate the profit I calculated it  as  ----, the sum of all the expected values of each customer, using as p_i the probability assigned to the customer by the model.
+To calculate  ---- I previously ordered the ---- from the highest to the lowest.
+According to these assumptions we can contact only 5000 people, so we should contact the 5000 people with the highest probability to renew in each model in order to maximize the profit.
+I insert a vertical line on the 5000th customer. We will choose the model with the highest profit on the vertical line.
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+library(ggplot2)
+Profit_curves  + geom_vline(xintercept = 5000)
+```
+
+
+```{r echo=FALSE, warning=FALSE, error=FALSE}
+riga_5000
+
+```
+It seems that the Random Forest model it is the best choice for us.
+
+
+
+
+
+
+
+
+
